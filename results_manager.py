@@ -1,10 +1,7 @@
 import pandas as pd
-# import csv
 import os
 import datetime
-# from jmetal.core.solution import FloatSolution
 from jmetal.util.solution import print_function_values_to_file
-# from utils.core_functions import time_now
 
 
 class ResultsManager:
@@ -17,6 +14,7 @@ class ResultsManager:
         self.base_folder = base_folder
         self.destination_path = self.set_results_folder()
         self.all_solutions = target_problem.all_solutions
+        self.candidate_instances = target_problem.candidate_instances
 
     def set_results_folder(self):
         folder = f'{self.base_folder}/{self.problem_name}/{self.solver_name}_{self.time_now()}/seed_{self.rseed}'
@@ -38,10 +36,21 @@ class ResultsManager:
             solutions=front,
             filename=f'{self.destination_path}/{self.problem_name}_{self.solver_name}_pareto_function_values_seed_{self.rseed}.pf')
 
+    def save_candidate_instances(self):
+        self.candidate_instances.to_csv(
+            path_or_buf=f"{self.destination_path}/{self.problem_name}_{self.solver_name}_candidate_instances.csv",
+            index=False)
+
     def save_all_solutions(self):
         self.all_solutions.to_csv(
             path_or_buf=f"{self.destination_path}/{self.problem_name}_{self.solver_name}_all_solutions.csv",
             index=False)
+
+    def save_results(self, front):
+        self.save_pareto_solutions(front)
+        self.save_function_values(front)
+        self.save_all_solutions()
+        self.save_candidate_instances()
 
     @staticmethod
     def time_now():

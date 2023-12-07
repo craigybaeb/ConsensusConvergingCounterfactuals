@@ -8,10 +8,7 @@ import pandas as pd
 # import numpy as np
 from jmetal.core.problem import FloatProblem
 from jmetal.core.solution import FloatSolution
-
 from disagreement import Disagreement
-# from results_manager import ResultsManager
-# from evaluation import Evaluation
 
 
 class CounterfactualConsensus(FloatProblem):
@@ -80,8 +77,13 @@ class CounterfactualConsensus(FloatProblem):
         self.lower_bound = [self.feature_ranges[i][0] for i in range(len(self.feature_ranges))]
         self.upper_bound = [self.feature_ranges[i][1] for i in range(len(self.feature_ranges))]
 
-        self.all_solutions = pd.DataFrame(
-            columns=[i for i in range(self.number_of_variables())] + [obj for obj in self.obj_labels])
+        output_columns = [i for i in range(self.number_of_variables())] + [obj for obj in self.obj_labels]
+        self.all_solutions = self.init_output_dataframe()
+        self.candidate_instances = self.init_output_dataframe()
+
+    def init_output_dataframe(self):
+        df = pd.DataFrame(columns=[i for i in range(self.number_of_variables())] + [obj for obj in self.obj_labels])
+        return df
 
     def number_of_objectives(self) -> int:
         return len(self.obj_directions)
@@ -192,11 +194,16 @@ class CounterfactualConsensus(FloatProblem):
         solution.objectives[3] = penalty_score
 
         self.record_solution(solution)
+        self.record_candidate_instance(candidate_instance, solution)
         return solution
 
     def record_solution(self, solution: FloatSolution):
         evaluated_solution = [var for var in solution.variables] + [obj for obj in solution.objectives]
         self.all_solutions.loc[len(self.all_solutions.index)] = evaluated_solution
+
+    def record_candidate_instance(self, candidate_instance: list[float], solution:FloatSolution):
+        candidate = [i for i in candidate_instance] + [obj for obj in solution.objectives]
+        self.candidate_instances.loc[len(self.candidate_instances.index)] = candidate
 
     def name(self) -> str:
         return 'CFC'
