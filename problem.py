@@ -40,7 +40,7 @@ class CounterfactualConsensus(FloatProblem):
         # self.immutable_features_set = set(immutable_features_idxs)
         self.continuous_features_idxs = continuous_features_idxs
         self.data = data
-        # predict_fn,
+        self.predict_fn = predict_fn
         # predict_proba_fn,
         self.disagreement_method = disagreement_method
         self.seed = seed
@@ -72,8 +72,8 @@ class CounterfactualConsensus(FloatProblem):
         # self.is_counterfactual_valid = self.utils.is_counterfactual_valid
         # self.print_results = self.utils.print_results
 
-        self.obj_labels = ['Proximity', 'Sparsity', 'Disagreement', 'Error']
-        self.obj_directions = [self.MAXIMIZE, self.MINIMIZE, self.MINIMIZE, self.MINIMIZE]
+        self.obj_labels = ['Proximity', 'Sparsity', 'Disagreement']
+        self.obj_directions = [self.MAXIMIZE, self.MINIMIZE, self.MINIMIZE]
         self.lower_bound = [self.feature_ranges[i][0] for i in range(len(self.feature_ranges))]
         self.upper_bound = [self.feature_ranges[i][1] for i in range(len(self.feature_ranges))]
 
@@ -179,19 +179,25 @@ class CounterfactualConsensus(FloatProblem):
     def evaluate(self, solution: FloatSolution):
         candidate_instance = self.get_candidate_instance(solution)
 
-        proximity_score = self.disagreement.calculate_proximity(self.data_instance, candidate_instance, True)
-        sparsity_score, _ = self.disagreement.calculate_sparsity(candidate_instance)
-        disagreement_score = self.disagreement.calculate_average_disagreement(candidate_instance)
+        prediction = self.predict_fn(candidate_instance)
+        if prediction == self.target_class:
 
-        if self.wachter:
-            penalty_score = self.disagreement.misclassification_penalty_wachter(candidate_instance)
+            proximity_score = self.disagreement.calculate_proximity(self.data_instance, candidate_instance, True)
+            sparsity_score, _ = self.disagreement.calculate_sparsity(candidate_instance)
+            disagreement_score = self.disagreement.calculate_average_disagreement(candidate_instance)
+
+            # if self.wachter:
+            #     penalty_score = self.disagreement.misclassification_penalty_wachter(candidate_instance)
+            # else:
+            #     penalty_score = self.disagreement.misclassification_penalty(candidate_instance)
+
+            solution.objectives[0] = proximity_score
+            solution.objectives[1] = sparsity_score
+            solution.objectives[2] = disagreement_score
+            # solution.objectives[3] = penalty_score
         else:
-            penalty_score = self.disagreement.misclassification_penalty(candidate_instance)
-
-        solution.objectives[0] = proximity_score
-        solution.objectives[1] = sparsity_score
-        solution.objectives[2] = disagreement_score
-        solution.objectives[3] = penalty_score
+            penalty_score = 2
+            solution.objectives = [penalty_score for _ in range(self.number_of_objectives())]
 
         self.record_solution(solution)
         self.record_candidate_instance(candidate_instance, solution)
