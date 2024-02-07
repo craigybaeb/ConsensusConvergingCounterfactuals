@@ -147,7 +147,8 @@ class CounterfactualConsensus(FloatProblem):
                 candidate_instance.insert(idx, category)
 
             elif idx in self.continuous_features_idxs:
-                candidate_instance.insert(idx, value)
+                formatted_value = self.format_to_original_precision(self.data_instance[idx], value)
+                candidate_instance.insert(idx, formatted_value)
 
             else:
                 raise TypeError(f"solution variable: {idx} is not properly defined")
@@ -175,6 +176,21 @@ class CounterfactualConsensus(FloatProblem):
             options = np.unique(data[:, feature])
             categories[feature] = options
         return categories
+    
+    def format_to_original_precision(self, original, new_float):
+        # Convert the original float to a string to find the decimal precision
+        original_str = str(original)
+        
+        # Check if there is a decimal point in the original number
+        if '.' in original_str:
+            decimal_precision = len(original_str.split('.')[1])
+        else:
+            decimal_precision = 0  # No decimal places if no decimal point
+        
+        # Format the new float to match the original precision
+        formatted_new_float = round(new_float, decimal_precision)
+        
+        return formatted_new_float
 
     def evaluate(self, solution: FloatSolution):
         candidate_instance = self.get_candidate_instance(solution)
