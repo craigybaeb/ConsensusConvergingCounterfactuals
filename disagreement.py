@@ -1,4 +1,5 @@
 import numbers
+import math
 import numpy as np
 from scipy.spatial.distance import cityblock, cosine, euclidean
 from functools import lru_cache
@@ -340,7 +341,8 @@ class Disagreement:
         num_changes = 0
 
         for i in range(len(counterfactual)):
-            if counterfactual[i] != self.data_instance[i]:
+            # if counterfactual[i] != self.data_instance[i]:
+            if not math.isclose(counterfactual[i], self.data_instance[i], rel_tol=0.00001):
                 num_changes += 1
 
         sparsity = num_changes / len(counterfactual)

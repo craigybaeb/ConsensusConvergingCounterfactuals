@@ -77,7 +77,7 @@ class CounterfactualConsensus(FloatProblem):
         self.lower_bound = [self.feature_ranges[i][0] for i in range(len(self.feature_ranges))]
         self.upper_bound = [self.feature_ranges[i][1] for i in range(len(self.feature_ranges))]
 
-        output_columns = [i for i in range(self.number_of_variables())] + [obj for obj in self.obj_labels]
+        # output_columns = [i for i in range(self.number_of_variables())] + [obj for obj in self.obj_labels]
         self.all_solutions = self.init_output_dataframe()
         self.candidate_instances = self.init_output_dataframe()
 
@@ -176,8 +176,41 @@ class CounterfactualConsensus(FloatProblem):
             categories[feature] = options
         return categories
 
+    def format_counterfactual(self, counterfactual):
+        """
+        Format the counterfactual by rounding numerical values and converting decimal values to integers.
+
+        @param counterfactual: The counterfactual to be formatted.
+        @type counterfactual: list
+
+        @return: The formatted counterfactual.
+        @rtype: list
+        """
+
+        # notes: rounding is still not helping as the smallest changes are being counted
+        # suggestion: how about we round the numbers in data_instance and counterfactual to several decimal places?
+
+        formatted_counterfactual = []
+        for i in range(len(counterfactual)):
+            # if i in self.categories:
+            if i in self.categorical_features_idxs:
+                formatted_counterfactual.append(round(counterfactual[i]))  # it's rounding off to the wrong category
+                # formatted_counterfactual.append(counterfactual[i])  # get the category as is
+            else:
+                decimal_feature = decimal.Decimal(str(self.data_instance[i]))
+                decimal_places = decimal_feature.as_tuple().exponent * -1
+                print("df", decimal_feature, "dp:", decimal_places)
+
+                if decimal_places == 0:
+                    formatted_counterfactual.append(int(counterfactual[i]))
+                else:
+                    formatted_counterfactual.append(round(counterfactual[i], decimal_places))
+
+        return formatted_counterfactual
+
     def evaluate(self, solution: FloatSolution):
         candidate_instance = self.get_candidate_instance(solution)
+        # candidate_instance = self.format_counterfactual(candidate_instance)
 
         prediction = self.predict_fn(candidate_instance)
         if prediction == self.target_class:
