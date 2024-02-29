@@ -3,7 +3,7 @@ import numpy as np
 from scipy.spatial.distance import cityblock, cosine, euclidean
 from functools import lru_cache
 import concurrent.futures
-
+from sklearn.neighbors import NearestNeighbors
 
 class Disagreement:
     """
@@ -46,11 +46,9 @@ class Disagreement:
                  predict_proba_fn,
                  target_class,
                  bounds,
-                 parallel,
-                 # categorical_features_idxs,
-                 # continuous_feature_ranges,
-                 # predict_fn,
-                 # feature_ranges,
+                 categorical_features_idxs,
+                 continuous_feature_ranges,
+                 feature_ranges,
                  ):
         self.data_instance = data_instance
         self.base_counterfactuals = base_counterfactuals
@@ -58,11 +56,9 @@ class Disagreement:
         self.predict_proba_fn = predict_proba_fn
         self.target_class = target_class
         self.bounds = bounds
-        self.parallel = parallel
-        # self.categorical_features = categorical_features_idxs
-        # self.continuous_feature_ranges = continuous_feature_ranges
-        # self.predict_fn = predict_fn
-        # self.feature_ranges = feature_ranges
+        self.categorical_features = categorical_features_idxs
+        self.continuous_feature_ranges = continuous_feature_ranges
+        self.feature_ranges = feature_ranges
 
         self.calculate_disagreement = self.set_disagreement_method(disagreement_method)
         self.normalized_instance = self.normalize_instance(data_instance)
@@ -160,24 +156,6 @@ class Disagreement:
 
         return cityblock(normalised_instance1, normalised_instance2)
 
-    # TODO fix or remove
-    @lru_cache(maxsize=None)
-    def median_absolute_deviation(self, data):
-        """
-        Calculate the median absolute deviation of the data.
-
-        @param data: The data for which to calculate the median absolute deviation.
-        @type data: list of float
-
-        @return: The median absolute deviation of the data.
-        @rtype: float
-        """
-        data_tuple = tuple(data)
-        median = np.median(data)
-        absolute_deviations = np.abs(np.array(data) - median)
-
-        return np.median(absolute_deviations)
-
     def normalize_instance(self, instance):
         """
         Normalize the given instance using min-max scaling.
@@ -221,17 +199,14 @@ class Disagreement:
         @return: The proximity score between the instances.
         @rtype: float
         """
-        query_instance = data_instance
-        counterfactual = counterfactual_instance
+        ranges = []
+        for i in range(len(self.data_instance)):
+            ranges.append(self.feature_ranges[i][1] - self.feature_ranges[i][0])
 
-        if normalise:
-            query_instance = self.normalized_instance
-            counterfactual = self.normalize_instance(counterfactual_instance)
+        gower_distance = self.calculate_gower_distance(data_instance, counterfactual_instance, categorical_columns=self.categorical_features, ranges=ranges)
 
-        l1_norm_score = self.calculate_manhattan_distance(query_instance, counterfactual)
-
-        return l1_norm_score / len(data_instance)
-
+        return gower_distance
+    
     def calculate_feature_overlap(self, candidate_instance, base_cf):
         """
         Calculate the feature overlap score between a candidate instance and a base counterfactual.
@@ -296,17 +271,9 @@ class Disagreement:
         """
         base_cf_scores = []
 
-        if self.parallel:
-            # Use ThreadPoolExecutor to compute agreement scores in parallel
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                agreement_scores = list(
-                    executor.map(self.calculate_agreement_score, self.base_counterfactuals, [candidate_instance] * len(self.base_counterfactuals)))
-
-            base_cf_scores = agreement_scores  # Store the agreement scores in the base_cf_scores list
-        else:
-            for base_counterfactual in self.base_counterfactuals:
-                agreement_score = self.calculate_agreement_score(candidate_instance, base_counterfactual)
-                base_cf_scores.append(agreement_score)
+        for base_counterfactual in self.base_counterfactuals:
+            agreement_score = self.calculate_agreement_score(candidate_instance, base_counterfactual)
+            base_cf_scores.append(agreement_score)
 
         return sum(base_cf_scores) / len(base_cf_scores)
 
@@ -393,11 +360,25 @@ class Disagreement:
         disagreement = np.mean(base_counterfactual_entropies)
 
         return disagreement
+    
+    def calculate_gower_distance(self, query, counterfactual, r=2, categorical_columns = [], ranges = []):
+
+        distance = 0
+        for i, feature in enumerate(query):
+
+            if(i in categorical_columns):
+                if(feature != counterfactual[i]):
+                    distance += 1
+            else:
+                numeric_distance = pow(abs(feature - counterfactual[i]), r) / ranges[i]
+                distance += numeric_distance
+
+        return distance / len(query)
 
     def calculate_direction_overlap(self, instance1, instance2):  # Check instance1 not used
 
         cf_actions = []
-        for base_counterfactual in self.base_counterfactuals + instance2:
+        for base_counterfactual in np.array(self.base_counterfactuals) + np.array(instance1):
             actions = []
             for feature in range(len(self.data_instance)):
                 difference = self.data_instance[feature] - base_counterfactual[feature]
@@ -412,9 +393,13 @@ class Disagreement:
 
         direction_overlap_scores = []
 
+        ranges = []
+        for i in range(len(self.data_instance)):
+            ranges.append(self.feature_ranges[i][1] - self.feature_ranges[i][0])
+
         for i in range(len(self.base_counterfactuals)):
-            manhattan_distance = self.calculate_manhattan_distance(self.base_counterfactuals[i], instance2) / len(
-                instance2)
+            manhattan_distance = self.calculate_gower_distance(self.base_counterfactuals[i], instance1, categorical_columns=self.categorical_features, ranges=ranges) / len(
+                instance1)
             matching_count = sum(
                 1 for counterfactual_i_feature, counterfactual_j_feature in zip(cf_actions[i], cf_actions[-1]) if
                 counterfactual_i_feature == counterfactual_j_feature)
@@ -474,3 +459,30 @@ class Disagreement:
         instance_probability_target = self.instance_probability[self.target_class]
 
         return 1 - abs(probability_target - instance_probability_target)
+    
+    def calculate_plausibility(self, candidate, data, n_neighbours=1):
+        data = data.to_numpy()
+        
+        # Create and fit the Nearest Neighbors model
+        nn = NearestNeighbors(n_neighbors=n_neighbours)
+        nn.fit(data)
+
+        # Find the nearest neighbors for the candidate
+        _, indices = nn.kneighbors([candidate], n_neighbors=n_neighbours)
+
+        total_distance = 0
+        for index in indices[0]:  # Iterate over all indices of nearest neighbors
+            nearest_neighbor_instance = data[index]
+
+            ranges = []
+            for i in range(len(self.data_instance)):
+                ranges.append(self.feature_ranges[i][1] - self.feature_ranges[i][0])
+
+            # Calculate Gower distance for each nearest neighbor
+            gower_distance = self.calculate_gower_distance(candidate, nearest_neighbor_instance, ranges=ranges, categorical_columns=self.categorical_features)
+            total_distance += gower_distance
+
+        # Calculate the average distance if n_neighbours > 1
+        average_distance = total_distance / n_neighbours
+
+        return average_distance

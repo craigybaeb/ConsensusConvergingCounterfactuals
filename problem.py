@@ -1,11 +1,8 @@
-import decimal
-import heapq
 import random
 import numpy as np
 
 import random
 import pandas as pd
-# import numpy as np
 from jmetal.core.problem import FloatProblem
 from jmetal.core.solution import FloatSolution
 from disagreement import Disagreement
@@ -24,40 +21,27 @@ class CounterfactualConsensus(FloatProblem):
                  predict_proba_fn,
                  disagreement_method,
                  seed,
-                 parallel=False,
-                 wachter=False,
-                 # feature_ranges,
-                 # class_labels,
-                 # labels=[],
-                 # feature_entropy=0.25,
-                 # sparse=False,
+                 feature_importances,
+                 sparsity_probability=0.5
                  ):
         super().__init__()
         self.data_instance = data_instance
         self.base_counterfactuals = base_counterfactuals
         self.categorical_features_idxs = categorical_features_idxs
         self.immutable_features_idxs = immutable_features_idxs
-        # self.immutable_features_set = set(immutable_features_idxs)
+        self.immutable_features_set = set(immutable_features_idxs)
         self.continuous_features_idxs = continuous_features_idxs
+        self.sparsity_probability = sparsity_probability
+        self.sparsity_probabilities = feature_importances
         self.data = data
+        self.like_data = self.get_like_data(predict_fn)
         self.predict_fn = predict_fn
-        # predict_proba_fn,
         self.disagreement_method = disagreement_method
         self.seed = seed
-        # self.results_manager = ResultsManager()
-        self.parallel = parallel
-        self.wachter = wachter
-
         self.bounds = self.get_bounds()
         self.feature_entropy = 0.25
         self.target_class = 1 - predict_fn(data_instance)  # TODO don't assume binary classification
         self.feature_ranges = self.get_bounds()
-
-        # self.labels = labels if labels else list(range(1, len(base_counterfactuals) + 1))
-        # self.class_labels = class_labels
-        # self.num_generations = num_generations
-        # self.categories = self.get_categories(categorical_features_idxs)
-        # self.feature_ranges = self.get_feature_ranges(feature_ranges)
 
         self.disagreement = Disagreement(
             disagreement_method=self.disagreement_method,
@@ -67,13 +51,13 @@ class CounterfactualConsensus(FloatProblem):
             predict_proba_fn=predict_proba_fn,
             target_class=self.target_class,
             bounds=self.bounds,
-            parallel=self.parallel
+            categorical_features_idxs=self.categorical_features_idxs,
+            continuous_feature_ranges=self.continuous_features_idxs,
+            feature_ranges=self.feature_ranges
         )
-        # self.is_counterfactual_valid = self.utils.is_counterfactual_valid
-        # self.print_results = self.utils.print_results
 
-        self.obj_labels = ['Proximity', 'Sparsity', 'Disagreement']
-        self.obj_directions = [self.MAXIMIZE, self.MINIMIZE, self.MINIMIZE]
+        self.obj_labels = ['Proximity', 'Sparsity', 'Disagreement', 'Plausibility']
+        self.obj_directions = [self.MAXIMIZE, self.MINIMIZE, self.MINIMIZE, self.MINIMIZE]
         self.lower_bound = [self.feature_ranges[i][0] for i in range(len(self.feature_ranges))]
         self.upper_bound = [self.feature_ranges[i][1] for i in range(len(self.feature_ranges))]
 
@@ -85,6 +69,64 @@ class CounterfactualConsensus(FloatProblem):
         df = pd.DataFrame(columns=[i for i in range(self.number_of_variables())] + [obj for obj in self.obj_labels])
         return df
 
+    def generate_sparse_random_instance(self):
+        candidate = np.array(self.generate_random_instance()).astype(float)
+
+        for i, _ in enumerate(candidate):
+            swap_probability = random.random()
+
+            if(swap_probability > self.sparsity_probability):
+                candidate[i] = self.data_instance[i]
+
+        new_solution = FloatSolution(
+            lower_bound=self.lower_bound,
+            upper_bound=self.upper_bound,
+            number_of_objectives=self.number_of_objectives(),
+            number_of_constraints=self.number_of_constraints())
+        
+        new_solution.variables = candidate
+        
+        return new_solution
+    
+    def generate_sparse_random_instance_fi(self):
+        candidate = np.array(self.generate_random_instance()).astype(float)
+
+        for i, _ in enumerate(candidate):
+            swap_probability = self.sparsity_probabilities[i]
+
+            if(swap_probability > self.sparsity_probability):
+                candidate[i] = self.data_instance[i]
+
+        new_solution = FloatSolution(
+            lower_bound=self.lower_bound,
+            upper_bound=self.upper_bound,
+            number_of_objectives=self.number_of_objectives(),
+            number_of_constraints=self.number_of_constraints())
+        new_solution.variables = candidate
+        
+        return new_solution
+    
+    def generate_random_instance(self):
+        candidate_instance = []
+
+        for i, _ in enumerate(self.feature_ranges):
+            if i in self.immutable_features_set:
+                # For immutable features, use the original value
+                candidate_instance.append(self.data_instance[i])
+            elif i in self.categorical_features_idxs:
+                possible_values = sorted(set(int(data[i]) for data in np.array(self.data)))
+                candidate_instance.append(random.choice(possible_values))
+            else:
+                candidate_value = random.uniform(self.lower_bound[i],
+                                                 self.upper_bound[i])
+                
+                candidate_value = self.format_to_original_precision(self.data_instance[i], candidate_value)
+
+                candidate_instance.append(candidate_value)
+
+        return candidate_instance
+
+
     def number_of_objectives(self) -> int:
         return len(self.obj_directions)
 
@@ -93,6 +135,34 @@ class CounterfactualConsensus(FloatProblem):
 
     def number_of_constraints(self) -> int:
         return 0
+    
+    def get_like_data(self, predict_fn):
+        """
+        Returns data similar to the input data based on class similarity using a given model.
+
+        Parameters:
+        - input_data: The input data for which similar data is to be found. Should be in the same format as the dataset used to train the model.
+        - dataset: The dataset from which similar data is to be retrieved. Assumes the last column is the class label.
+        - model: A trained model capable of making class predictions.
+
+        Returns:
+        - similar_data: A subset of the dataset containing only instances of the class predicted for the input_data.
+        """
+
+        data = self.data.to_numpy()
+        # Predict the class of the input data
+        predicted_class = predict_fn(self.data_instance)
+
+        # Separate features and labels from the dataset
+        features = data[:, :-1]  # Assuming all columns except the last one are features
+        labels = data[:, -1]  # Assuming the last column is the label
+
+        # Filter the dataset to include only instances of the predicted class
+        similar_data = features[labels == predicted_class]
+
+        return similar_data
+
+
 
     # def get_feature_idxs(self, type_of_features: list) -> list:  # Tiwonge
     #     all_features = list(self.data.columns)
@@ -132,6 +202,7 @@ class CounterfactualConsensus(FloatProblem):
             number_of_constraints=self.number_of_constraints())
         new_solution.variables = [random.uniform(self.lower_bound[i],
                                                  self.upper_bound[i]) for i in range(self.number_of_variables())]
+        
         return new_solution
 
     def get_candidate_instance(self, solution: FloatSolution) -> list[float]:
@@ -146,12 +217,17 @@ class CounterfactualConsensus(FloatProblem):
                 category = self.get_category(idx, value)
                 candidate_instance.insert(idx, category)
 
+
             elif idx in self.continuous_features_idxs:
                 formatted_value = self.format_to_original_precision(self.data_instance[idx], value)
                 candidate_instance.insert(idx, formatted_value)
+  
 
             else:
+
                 raise TypeError(f"solution variable: {idx} is not properly defined")
+            
+
         return candidate_instance
 
     def get_category(self, idx: int, value: float) -> float | None:
@@ -163,7 +239,7 @@ class CounterfactualConsensus(FloatProblem):
             for i in range(len(categories)):
                 category_min = category_max
                 category_max += 1 / len(categories)
-                if category_min <= value < category_max:
+                if category_min <= value <= category_max:
                     category = categories[i]
             return category
         else:
@@ -201,16 +277,14 @@ class CounterfactualConsensus(FloatProblem):
             proximity_score = self.disagreement.calculate_proximity(self.data_instance, candidate_instance, True)
             sparsity_score, _ = self.disagreement.calculate_sparsity(candidate_instance)
             disagreement_score = self.disagreement.calculate_average_disagreement(candidate_instance)
-
-            # if self.wachter:
-            #     penalty_score = self.disagreement.misclassification_penalty_wachter(candidate_instance)
-            # else:
-            #     penalty_score = self.disagreement.misclassification_penalty(candidate_instance)
+            plausibility_score = self.disagreement.calculate_plausibility(candidate_instance, self.data)
 
             solution.objectives[0] = proximity_score
             solution.objectives[1] = sparsity_score
             solution.objectives[2] = disagreement_score
-            # solution.objectives[3] = penalty_score
+            solution.objectives[3] = plausibility_score
+            # solution.objectives[4] = penalty_score
+            
         else:
             penalty_score = 2
             solution.objectives = [penalty_score for _ in range(self.number_of_objectives())]

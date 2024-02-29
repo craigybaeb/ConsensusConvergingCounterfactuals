@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import os
 import datetime
@@ -25,7 +26,7 @@ class ResultsManager:
     def save_pareto_solutions(self, front) -> None:
         solutions_df = pd.DataFrame(columns=self.target_problem.all_solutions.columns)
         for solution in front:
-            row = solution.variables + solution.objectives  # add constraints later
+            row = np.concatenate((solution.variables,solution.objectives), axis=None)  # add constraints later
             solutions_df.loc[len(solutions_df)] = row
         solutions_df.to_csv(
             path_or_buf=f'{self.destination_path}/{self.problem_name}_{self.solver_name}_pareto_solutions.csv',
