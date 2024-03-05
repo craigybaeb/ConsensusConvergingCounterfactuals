@@ -60,23 +60,36 @@ class NSGAII_Custom(NSGAII):
     def create_initial_solutions(self) -> List[S]:
             return [self.problem.generate_sparse_random_instance_fi() for _ in range(self.population_size)]
 
-    def replacement(self, population: List[S], offspring_population: List[S]) -> List[List[S]]:
-            """This method joins the current and offspring populations to produce the population of the next generation
-            by applying the ranking and crowding distance selection.
+    def step(self):
+        mating_population = self.selection(self.solutions)
+        offspring_population = self.reproduction(mating_population)
 
-            :param population: Parent population.
-            :param offspring_population: Offspring population.
-            :return: New population after ranking and crowding distance selection is applied.
-            """
+        if self.evaluations < self.termination_criterion.max_evaluations - self.population_size:
             offspring_population = self.reset_offspring(offspring_population)
 
-            ranking = FastNonDominatedRanking(self.dominance_comparator)
-            density_estimator = CrowdingDistance()
+        offspring_population = self.evaluate(offspring_population)
 
-            r = RankingAndDensityEstimatorReplacement(ranking, density_estimator, RemovalPolicyType.ONE_SHOT)
-            solutions = r.replace(population, offspring_population)
+        self.solutions = self.replacement(self.solutions, offspring_population)
 
-            return solutions
+
+    # def replacement(self, population: List[S], offspring_population: List[S]) -> List[List[S]]:
+    #         """This method joins the current and offspring populations to produce the population of the next generation
+    #         by applying the ranking and crowding distance selection.
+    #
+    #         :param population: Parent population.
+    #         :param offspring_population: Offspring population.
+    #         :return: New population after ranking and crowding distance selection is applied.
+    #         """
+    #
+    #         offspring_population = self.reset_offspring(offspring_population)
+    #
+    #         ranking = FastNonDominatedRanking(self.dominance_comparator)
+    #         density_estimator = CrowdingDistance()
+    #
+    #         r = RankingAndDensityEstimatorReplacement(ranking, density_estimator, RemovalPolicyType.ONE_SHOT)
+    #         solutions = r.replace(population, offspring_population)
+    #
+    #         return solutions
 
     def reset_offspring(self, offspring):
         updated_offspring = []
